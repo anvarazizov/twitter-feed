@@ -20,9 +20,6 @@
 
 @end
 
-#define kTableViewContentSection 0
-#define kTableViewLoadMoreSection 1
-
 static NSString * kSearchQuery = @"#ios";
 static NSString * kFileName = @"tweets";
 
@@ -48,8 +45,6 @@ static NSString * kFileName = @"tweets";
                                              selector:@selector(applicationWillTerminate:)
                                                  name:UIApplicationWillTerminateNotification
                                                object:nil];
-    
-    [self populateTableView];
 }
 
 - (void)viewWillAppear:(BOOL)animated
@@ -58,6 +53,7 @@ static NSString * kFileName = @"tweets";
     
     [self initRefreshControl];
     [self initFooterView];
+    [self populateTableView];
 }
 
 - (void)populateTableView
