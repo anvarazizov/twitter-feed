@@ -10,6 +10,7 @@
 #import <Social/Social.h>
 #import <Accounts/Accounts.h>
 #import "TweetCell.h"
+#import "APIConnectionManager.h"
 
 @interface ViewController () <UITableViewDataSource, UITableViewDelegate>
 
@@ -26,10 +27,8 @@
 #define kTableViewLoadMoreSection 1
 #define CELL_BOTTOM_PADDING 10
 
-// Completion block for Twitter API request.
-typedef void(^TwitterRequestHandler)(NSData *responseData, NSHTTPURLResponse * urlResponse, NSError *error);
-
 static NSString * kSearchQuery = @"india";
+static NSString * kFileName = @"tweets";
 
 @implementation ViewController
 
@@ -43,8 +42,6 @@ static NSString * kSearchQuery = @"india";
     UINib * nib = [UINib nibWithNibName:@"TweetCell" bundle:nil];
     [self.tableView registerNib:nib forCellReuseIdentifier:@"tweetCell"];
     
-    [self fetchRecentTweets];
-    
     self.title = @"Tweets";
     
     self.refreshControl = [[UIRefreshControl alloc] init];
@@ -56,6 +53,17 @@ static NSString * kSearchQuery = @"india";
     [self.tableView addSubview:self.refreshControl];
     
     [self initFooterView];
+    
+    // check network connection
+    
+    if ([self isNetworkReachable])
+    {
+        [self fetchRecentTweets];
+    }
+    else
+    {
+        [self unarchiveTweets];
+    }
 }
 
 - (void)initFooterView
@@ -67,57 +75,6 @@ static NSString * kSearchQuery = @"india";
     self.bottomLoader.hidesWhenStopped = YES;
     
     [self.footerView addSubview:self.bottomLoader];
-}
-
-- (void)fetchRecentTweets
-{
-    ACAccountStore * account = [[ACAccountStore alloc] init];
-    ACAccountType * accountType = [account accountTypeWithAccountTypeIdentifier:ACAccountTypeIdentifierTwitter];
-    
-    [account requestAccessToAccountsWithType:accountType
-                                     options:nil completion:^(BOOL granted, NSError *error)
-     {
-         if (granted == YES)
-         {
-             NSArray * arrayOfAccounts = [account accountsWithAccountType:accountType];
-             
-             if ([arrayOfAccounts count] > 0)
-             {
-                 self.twitterAccount = [arrayOfAccounts lastObject];
-                 NSString * parameters = @"result_type=recent";
-            
-                 [self searchTwitterWithQuery:kSearchQuery
-                                   parameters:parameters
-                                      account:self.twitterAccount
-                            completionHandler:^(NSData *responseData, NSHTTPURLResponse *urlResponse, NSError *error)
-                 {
-                     NSDictionary * result = [NSJSONSerialization
-                                              JSONObjectWithData:responseData
-                                              options:NSJSONReadingMutableLeaves
-                                              error:&error];
-                     
-                     NSMutableArray * oldTweets = [[NSMutableArray alloc] initWithArray:self.dataSource];
-                     NSMutableArray * newTweets = [[NSMutableArray alloc] initWithArray:[result objectForKey:@"statuses"]];
-                     
-                     [oldTweets addObjectsFromArray:newTweets];
-                     
-                     self.dataSource = [self removeDuplicatesFromArray:oldTweets];
-                     
-                     NSLog(@"%lu", (unsigned long)self.dataSource.count);
-                     
-                     if (self.dataSource.count != 0) {
-                         dispatch_async(dispatch_get_main_queue(), ^{
-                             [self.tableView reloadData];
-                         });
-                     }
-                 }];
-             }
-         }
-         else
-         {
-             // Handle failure to get account access
-         }
-     }];
 }
 
 - (void)didReceiveMemoryWarning
@@ -188,55 +145,9 @@ static NSString * kSearchQuery = @"india";
 
 #pragma mark – API calls
 
-- (void)loadNewTweets
+- (void)fetchRecentTweets
 {
-    NSString * since_id = (NSString *)[[[self sortIDs] sortedArrayUsingSelector:@selector(compare:)] lastObject];
-    
-    NSString * parameters = [NSString stringWithFormat:@"since_id=%@", since_id];
-    
-    [self searchTwitterWithQuery:kSearchQuery
-                      parameters:parameters
-                         account:self.twitterAccount
-               completionHandler:^(NSData *responseData, NSHTTPURLResponse *urlResponse, NSError *error)
-    {
-        NSDictionary * result = [NSJSONSerialization
-                                 JSONObjectWithData:responseData
-                                 options:NSJSONReadingMutableLeaves
-                                 error:&error];
-        
-        NSMutableArray * oldTweets = [[NSMutableArray alloc] initWithArray:self.dataSource];
-        NSMutableArray * newTweets = [[NSMutableArray alloc] initWithArray:[result objectForKey:@"statuses"]];
-        
-        [newTweets addObjectsFromArray:oldTweets];
-        
-        self.dataSource = [self removeDuplicatesFromArray:newTweets];
-        
-        NSLog(@"%lu", (unsigned long)self.dataSource.count);
-        
-        if (self.dataSource.count != 0) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [self.tableView reloadData];
-    
-                if (self.refreshControl)
-                {
-                    [self.refreshControl endRefreshing];
-                }
-            });
-        }
-    }];
-}
-
-- (void)loadOlderTweets
-{
-    NSString * maxID = (NSString *)[[[self sortIDs] sortedArrayUsingSelector:@selector(compare:)] firstObject];
-    
-    // fetch tweets with max_id
-    NSString * parameters = [NSString stringWithFormat:@"max_id=%@", maxID];
-    
-    [self searchTwitterWithQuery:kSearchQuery
-                      parameters:parameters
-                         account:self.twitterAccount
-               completionHandler:^(NSData *responseData, NSHTTPURLResponse *urlResponse, NSError *error)
+    [[APIConnectionManager sharedManager] fetchRecentTweetsForQuery:kSearchQuery completionHandler:^(NSData *responseData, NSHTTPURLResponse *urlResponse, NSError *error)
     {
         NSDictionary * result = [NSJSONSerialization
                                  JSONObjectWithData:responseData
@@ -255,26 +166,85 @@ static NSString * kSearchQuery = @"india";
         if (self.dataSource.count != 0) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 [self.tableView reloadData];
-                
-                [self.bottomLoader stopAnimating];
             });
         }
     }];
 }
 
-- (void)searchTwitterWithQuery:(NSString *)query parameters:(NSString *)parameters account:(ACAccount *)account completionHandler:(TwitterRequestHandler)completioHandler
+- (void)loadNewTweets
 {
-    NSURL * searchURL = [NSURL URLWithString:[NSString stringWithFormat:@"https://api.twitter.com/1.1/search/tweets.json?q=%@&%@", query, parameters]];
+    NSString * sinceID = (NSString *)[[[self sortIDs] sortedArrayUsingSelector:@selector(compare:)] lastObject];
     
-    SLRequest * searchRequest = [SLRequest requestForServiceType:SLServiceTypeTwitter requestMethod:SLRequestMethodGET URL:searchURL parameters:nil];
-    
-    searchRequest.account = account;
-    
-    [searchRequest performRequestWithHandler:^(NSData *responseData, NSHTTPURLResponse *urlResponse, NSError *error)
+    [[APIConnectionManager sharedManager] loadNewTweetsForQuery:kSearchQuery withSinceID:sinceID completionHandler:^(NSData *responseData, NSHTTPURLResponse *urlResponse, NSError *error)
     {
-        completioHandler(responseData, urlResponse, error);
+        if (responseData)
+        {
+            NSDictionary * result = [NSJSONSerialization
+                                     JSONObjectWithData:responseData
+                                     options:NSJSONReadingMutableLeaves
+                                     error:&error];
+            
+            NSMutableArray * oldTweets = [[NSMutableArray alloc] initWithArray:self.dataSource];
+            NSMutableArray * newTweets = [[NSMutableArray alloc] initWithArray:[result objectForKey:@"statuses"]];
+            
+            [newTweets addObjectsFromArray:oldTweets];
+            
+            self.dataSource = [self removeDuplicatesFromArray:newTweets];
+            
+            NSLog(@"%lu", (unsigned long)self.dataSource.count);
+            
+            if (self.dataSource.count != 0) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [self.tableView reloadData];
+                    
+                    if (self.refreshControl)
+                    {
+                        [self.refreshControl endRefreshing];
+                    }
+                });
+            }
+        }
+        else
+        {
+            [self.refreshControl endRefreshing];
+        }
     }];
 }
+
+- (void)loadOlderTweets
+{
+    NSString * maxID = (NSString *)[[[self sortIDs] sortedArrayUsingSelector:@selector(compare:)] firstObject];
+    
+    [[APIConnectionManager sharedManager] loadOlderTweetsForQuery:kSearchQuery withMaxID:maxID completionHandler:^(NSData *responseData, NSHTTPURLResponse *urlResponse, NSError *error)
+    {
+        if (responseData)
+        {
+            NSDictionary * result = [NSJSONSerialization
+                                     JSONObjectWithData:responseData
+                                     options:NSJSONReadingMutableLeaves
+                                     error:&error];
+            
+            NSMutableArray * oldTweets = [[NSMutableArray alloc] initWithArray:self.dataSource];
+            NSMutableArray * newTweets = [[NSMutableArray alloc] initWithArray:[result objectForKey:@"statuses"]];
+            
+            [oldTweets addObjectsFromArray:newTweets];
+            
+            self.dataSource = [self removeDuplicatesFromArray:oldTweets];
+            
+            NSLog(@"%lu", (unsigned long)self.dataSource.count);
+            
+            if (self.dataSource.count != 0) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [self.tableView reloadData];
+                    
+                    [self.bottomLoader stopAnimating];
+                });
+            }
+        }
+    }];
+}
+
+#pragma mark – Helpers
 
 - (NSArray *)removeDuplicatesFromArray:(NSArray *)array
 {
@@ -291,6 +261,50 @@ static NSString * kSearchQuery = @"india";
     }
     
     return newArray;
+}
+
+- (BOOL)isNetworkReachable
+{
+    // checking data from very small webpage
+    NSURL * url = [NSURL URLWithString:@"http://anvarazizov.com/reachability/"];
+    BOOL isData = [NSData dataWithContentsOfURL:url];
+    
+    return isData;
+}
+
+#pragma mark – Data archiving and unarchiving
+
+- (void)archiveTweets
+{
+    NSString * documentsDirectoryPath = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
+    NSString * filePath = [NSString stringWithFormat:@"%@/%@", documentsDirectoryPath, kFileName];
+    
+    [NSKeyedArchiver archiveRootObject:self.dataSource toFile:filePath];
+}
+
+- (void)unarchiveTweets
+{
+    NSFileManager * fileManager = [NSFileManager defaultManager];
+    NSString * documentsDirectoryPath = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
+    NSString * filePath = [NSString stringWithFormat:@"%@/%@", documentsDirectoryPath, kFileName];
+    
+    if( [fileManager fileExistsAtPath:filePath] )
+    {
+        self.dataSource = [NSKeyedUnarchiver unarchiveObjectWithFile:filePath];
+    }
+    else
+    {
+        NSLog(@"Unarchiving error");
+    }
+}
+
+- (void)setDataSource:(NSArray *)dataSource
+{
+    if (_dataSource != dataSource)
+    {
+        _dataSource = dataSource;
+        [self archiveTweets];
+    }
 }
 
 @end
