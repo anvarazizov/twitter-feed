@@ -7,15 +7,12 @@
 //
 
 #import "ViewController.h"
-#import <Social/Social.h>
-#import <Accounts/Accounts.h>
 #import "TweetCell.h"
 #import "APIConnectionManager.h"
 
 @interface ViewController () <UITableViewDataSource, UITableViewDelegate>
 
 @property (weak, nonatomic) IBOutlet UITableView * tableView;
-@property (nonatomic, strong) ACAccount * twitterAccount;
 @property (nonatomic, strong) NSArray * dataSource;
 @property (nonatomic, strong) UIRefreshControl * refreshControl;
 @property (nonatomic, strong) UIView * footerView;
@@ -25,9 +22,8 @@
 
 #define kTableViewContentSection 0
 #define kTableViewLoadMoreSection 1
-#define CELL_BOTTOM_PADDING 10
 
-static NSString * kSearchQuery = @"india";
+static NSString * kSearchQuery = @"#ios";
 static NSString * kFileName = @"tweets";
 
 @implementation ViewController
@@ -36,14 +32,45 @@ static NSString * kFileName = @"tweets";
 {
     [super viewDidLoad];
     
+    self.title = @"Tweets";
+    
     self.tableView.delegate = self;
     self.tableView.dataSource = self;
     
-    UINib * nib = [UINib nibWithNibName:@"TweetCell" bundle:nil];
-    [self.tableView registerNib:nib forCellReuseIdentifier:@"tweetCell"];
+    [self.tableView registerNib:[UINib nibWithNibName:@"TweetCell" bundle:nil] forCellReuseIdentifier:@"tweetCell"];
+   
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(applicationWillResignActive:)
+                                                 name:UIApplicationWillResignActiveNotification
+                                               object:nil];
     
-    self.title = @"Tweets";
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(applicationWillTerminate:)
+                                                 name:UIApplicationWillTerminateNotification
+                                               object:nil];
     
+    [self populateTableView];
+}
+
+- (void)viewWillAppear:(BOOL)animated
+{
+    [super viewWillAppear:animated];
+    
+    [self initRefreshControl];
+    [self initFooterView];
+}
+
+- (void)populateTableView
+{
+    if ([self isNetworkReachable]) {
+        [self fetchRecentTweets];
+    } else {
+        [self unarchiveTweets];
+    }
+}
+
+- (void)initRefreshControl
+{
     self.refreshControl = [[UIRefreshControl alloc] init];
     self.refreshControl.backgroundColor = [UIColor purpleColor];
     self.refreshControl.tintColor = [UIColor whiteColor];
@@ -51,27 +78,15 @@ static NSString * kFileName = @"tweets";
                             action:@selector(loadNewTweets)
                   forControlEvents:UIControlEventValueChanged];
     [self.tableView addSubview:self.refreshControl];
-    
-    [self initFooterView];
-    
-    // check network connection
-    
-    if ([self isNetworkReachable])
-    {
-        [self fetchRecentTweets];
-    }
-    else
-    {
-        [self unarchiveTweets];
-    }
 }
 
 - (void)initFooterView
 {
-    self.footerView = [[UIView alloc] initWithFrame:CGRectMake(0.0, 0.0, 320.0, 40.0)];
+    self.footerView = [[UIView alloc] initWithFrame:CGRectMake(0.0, 0.0, self.view.bounds.size.width, 40.0)];
     
     self.bottomLoader = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray];
-    self.bottomLoader.frame = CGRectMake(150.0, 5.0, 20.0, 20.0);
+    self.bottomLoader.frame = CGRectMake(0, 0, 20.0, 20.0);
+    self.bottomLoader.center = CGPointMake(self.view.center.x, self.footerView.center.y);
     self.bottomLoader.hidesWhenStopped = YES;
     
     [self.footerView addSubview:self.bottomLoader];
@@ -117,7 +132,7 @@ static NSString * kFileName = @"tweets";
 
     CGRect tweetRectSize = [tweetText boundingRectWithSize:CGSizeMake(300.0, MAXFLOAT) options:NSStringDrawingUsesLineFragmentOrigin attributes:@{NSFontAttributeName:font} context:nil];
     
-    CGSize rectSize = CGSizeMake(300, authorRectSize.size.height + tweetRectSize.size.height + cell.authorLabelToTop.constant + cell.tweetLbelToAuthorTop.constant + CELL_BOTTOM_PADDING);
+    CGSize rectSize = CGSizeMake(300, authorRectSize.size.height + tweetRectSize.size.height + cell.authorLabelToTop.constant + cell.tweetLbelToAuthorTop.constant + self.view.bounds.size.height / 30);
     
     return rectSize.height;
 }
@@ -149,24 +164,27 @@ static NSString * kFileName = @"tweets";
 {
     [[APIConnectionManager sharedManager] fetchRecentTweetsForQuery:kSearchQuery completionHandler:^(NSData *responseData, NSHTTPURLResponse *urlResponse, NSError *error)
     {
-        NSDictionary * result = [NSJSONSerialization
-                                 JSONObjectWithData:responseData
-                                 options:NSJSONReadingMutableLeaves
-                                 error:&error];
-        
-        NSMutableArray * oldTweets = [[NSMutableArray alloc] initWithArray:self.dataSource];
-        NSMutableArray * newTweets = [[NSMutableArray alloc] initWithArray:[result objectForKey:@"statuses"]];
-        
-        [oldTweets addObjectsFromArray:newTweets];
-        
-        self.dataSource = [self removeDuplicatesFromArray:oldTweets];
-        
-        NSLog(@"%lu", (unsigned long)self.dataSource.count);
-        
-        if (self.dataSource.count != 0) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [self.tableView reloadData];
-            });
+        if (responseData)
+        {
+            NSDictionary * result = [NSJSONSerialization
+                                     JSONObjectWithData:responseData
+                                     options:NSJSONReadingMutableLeaves
+                                     error:&error];
+            
+            NSMutableArray * oldTweets = [[NSMutableArray alloc] initWithArray:self.dataSource];
+            NSMutableArray * newTweets = [[NSMutableArray alloc] initWithArray:[result objectForKey:@"statuses"]];
+            
+            [oldTweets addObjectsFromArray:newTweets];
+            
+            self.dataSource = [self removeDuplicatesFromArray:oldTweets];
+            
+            NSLog(@"%lu", (unsigned long)self.dataSource.count);
+            
+            if (self.dataSource.count != 0) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [self.tableView reloadData];
+                });
+            }
         }
     }];
 }
@@ -267,12 +285,15 @@ static NSString * kFileName = @"tweets";
 {
     // checking data from very small webpage
     NSURL * url = [NSURL URLWithString:@"http://anvarazizov.com/reachability/"];
-    BOOL isData = [NSData dataWithContentsOfURL:url];
+    NSData * data = [NSData dataWithContentsOfURL:url];
     
-    return isData;
+    if (data)
+        return YES;
+    else
+        return NO;
 }
 
-#pragma mark – Data archiving and unarchiving
+#pragma mark – Data caching
 
 - (void)archiveTweets
 {
@@ -298,13 +319,17 @@ static NSString * kFileName = @"tweets";
     }
 }
 
-- (void)setDataSource:(NSArray *)dataSource
+- (void)applicationWillResignActive:(NSNotification *)notification
 {
-    if (_dataSource != dataSource)
-    {
-        _dataSource = dataSource;
-        [self archiveTweets];
-    }
+    [self archiveTweets];
+}
+
+- (void)applicationWillTerminate:(NSNotification *)notification
+{
+    [self archiveTweets];
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:UIApplicationWillResignActiveNotification object:nil];
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:UIApplicationWillTerminateNotification object:nil];
+    
 }
 
 @end

@@ -30,7 +30,9 @@
 
 - (void)searchTwitterWithQuery:(NSString *)query parameters:(NSString *)parameters account:(ACAccount *)account completionHandler:(TwitterRequestHandler)completioHandler
 {
-    NSURL * searchURL = [NSURL URLWithString:[NSString stringWithFormat:@"https://api.twitter.com/1.1/search/tweets.json?q=%@&%@", query, parameters]];
+
+    NSString * stringURL = [[NSString stringWithFormat:@"https://api.twitter.com/1.1/search/tweets.json?q=%@&%@", query, parameters] stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
+    NSURL * searchURL = [NSURL URLWithString:stringURL];
     
     SLRequest * searchRequest = [SLRequest requestForServiceType:SLServiceTypeTwitter requestMethod:SLRequestMethodGET URL:searchURL parameters:nil];
     
