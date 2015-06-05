@@ -10,8 +10,6 @@
 
 @interface APIConnectionManager ()
 
-@property (nonatomic, strong) ACAccount * twitterAccount;
-
 @end
 
 @implementation APIConnectionManager
@@ -28,46 +26,34 @@
     return instance;
 }
 
-- (void)searchTwitterWithQuery:(NSString *)query parameters:(NSString *)parameters account:(ACAccount *)account completionHandler:(TwitterRequestHandler)completioHandler
+// Basic method for Twitter search
+- (void)searchTwitterWithQuery:(NSString *)query parameters:(NSString *)parameters completionHandler:(TwitterRequestHandler)completioHandler
 {
-
-    NSString * stringURL = [[NSString stringWithFormat:@"https://api.twitter.com/1.1/search/tweets.json?q=%@&%@", query, parameters] stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
-    NSURL * searchURL = [NSURL URLWithString:stringURL];
+    ACAccountStore * accountStore = [[ACAccountStore alloc] init];
+    ACAccountType * accountType = [accountStore accountTypeWithAccountTypeIdentifier:ACAccountTypeIdentifierTwitter];
     
-    SLRequest * searchRequest = [SLRequest requestForServiceType:SLServiceTypeTwitter requestMethod:SLRequestMethodGET URL:searchURL parameters:nil];
-    
-    searchRequest.account = account;
-    
-    [searchRequest performRequestWithHandler:^(NSData *responseData, NSHTTPURLResponse *urlResponse, NSError *error)
-     {
-         completioHandler(responseData, urlResponse, error);
-     }];
-}
-
-- (void)fetchRecentTweetsForQuery:(NSString *)query completionHandler:(TwitterRequestHandler)completionHandler
-{
-    ACAccountStore * account = [[ACAccountStore alloc] init];
-    ACAccountType * accountType = [account accountTypeWithAccountTypeIdentifier:ACAccountTypeIdentifierTwitter];
-    
-    [account requestAccessToAccountsWithType:accountType
+    [accountStore requestAccessToAccountsWithType:accountType
                                      options:nil completion:^(BOOL granted, NSError *error)
      {
          if (granted == YES)
          {
-             NSArray * arrayOfAccounts = [account accountsWithAccountType:accountType];
+             NSArray * arrayOfAccounts = [accountStore accountsWithAccountType:accountType];
              
              if ([arrayOfAccounts count] > 0)
              {
-                 self.twitterAccount = [arrayOfAccounts lastObject];
-                 NSString * parameters = @"result_type=recent";
-                 
-                 [self searchTwitterWithQuery:query
-                                   parameters:parameters
-                                      account:self.twitterAccount
-                            completionHandler:^(NSData *responseData, NSHTTPURLResponse *urlResponse, NSError *error)
-                  {
-                      completionHandler(responseData, urlResponse, error);
-                  }];
+                ACAccount * twitterAccount = [arrayOfAccounts lastObject];
+    
+                NSString * stringURL = [[NSString stringWithFormat:@"https://api.twitter.com/1.1/search/tweets.json?q=%@&%@", query, parameters] stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
+                NSURL * searchURL = [NSURL URLWithString:stringURL];
+                
+                SLRequest * searchRequest = [SLRequest requestForServiceType:SLServiceTypeTwitter requestMethod:SLRequestMethodGET URL:searchURL parameters:nil];
+                
+                searchRequest.account = twitterAccount;
+                
+                [searchRequest performRequestWithHandler:^(NSData *responseData, NSHTTPURLResponse *urlResponse, NSError *error)
+                 {
+                     completioHandler(responseData, urlResponse, error);
+                 }];
              }
              else
              {
@@ -91,26 +77,39 @@
      }];
 }
 
+// fetches recent tweets
+- (void)fetchRecentTweetsForQuery:(NSString *)query completionHandler:(TwitterRequestHandler)completionHandler
+{
+    NSString * parameters = @"result_type=recent";
+                 
+    [self searchTwitterWithQuery:query
+                       parameters:parameters
+                completionHandler:^(NSData *responseData, NSHTTPURLResponse *urlResponse, NSError *error)
+    {
+          completionHandler(responseData, urlResponse, error);
+    }];
+}
+
+// fetches tweets newer than ones with since_id
 - (void)loadNewTweetsForQuery:(NSString *)query withSinceID:(NSString *)sinceID completionHandler:(TwitterRequestHandler)completionHandler
 {
     NSString * parameters = [NSString stringWithFormat:@"since_id=%@", sinceID];
     
     [self searchTwitterWithQuery:query
                       parameters:parameters
-                         account:self.twitterAccount
                completionHandler:^(NSData *responseData, NSHTTPURLResponse *urlResponse, NSError *error)
      {
          completionHandler(responseData, urlResponse, error);
      }];
 }
 
+// fetches tweets older than ones with max_id
 - (void)loadOlderTweetsForQuery:(NSString *)query withMaxID:(NSString *)maxID completionHandler:(TwitterRequestHandler)completionHandler
 {
     NSString * parameters = [NSString stringWithFormat:@"max_id=%@", maxID];
     
     [self searchTwitterWithQuery:query
                       parameters:parameters
-                         account:self.twitterAccount
                completionHandler:^(NSData *responseData, NSHTTPURLResponse *urlResponse, NSError *error)
      {
          completionHandler(responseData, urlResponse, error);

@@ -9,6 +9,8 @@
 #import "ViewController.h"
 #import "TweetCell.h"
 #import "APIConnectionManager.h"
+#import "CoreDataManager.h"
+#import "Tweet.h"
 
 @interface ViewController () <UITableViewDataSource, UITableViewDelegate>
 
@@ -20,7 +22,7 @@
 
 @end
 
-static NSString * kSearchQuery = @"#ios";
+static NSString * kSearchQuery = @"#india";
 static NSString * kFileName = @"tweets";
 
 @implementation ViewController
@@ -58,10 +60,12 @@ static NSString * kFileName = @"tweets";
 
 - (void)populateTableView
 {
-    if ([self isNetworkReachable]) {
+    if ([self isNetworkReachable])
+    {
+        [[CoreDataManager sharedManager] cleanDatabase];
         [self fetchRecentTweets];
     } else {
-        [self unarchiveTweets];
+        [self loadTweetsFromDatabase];
     }
 }
 
@@ -109,7 +113,7 @@ static NSString * kFileName = @"tweets";
 {
     TweetCell * cell = (TweetCell *)[tableView dequeueReusableCellWithIdentifier:@"tweetCell" forIndexPath:indexPath];
         
-    cell.authorLabel.text = [[[self.dataSource objectAtIndex:indexPath.row] objectForKey:@"user"] objectForKey:@"name"];
+    cell.authorLabel.text = [[[self.dataSource objectAtIndex:indexPath.row] objectForKey:@"user"] objectForKey:@"screen_name"];
     cell.tweetLabel.text = [[self.dataSource objectAtIndex:indexPath.row] objectForKey:@"text"];
 
     return cell;
@@ -119,7 +123,7 @@ static NSString * kFileName = @"tweets";
 {
     TweetCell * cell = (TweetCell *)[tableView dequeueReusableCellWithIdentifier:@"tweetCell"];
     
-    NSString * authorText = [[[self.dataSource objectAtIndex:indexPath.row] objectForKey:@"user"] objectForKey:@"name"];
+    NSString * authorText = [[[self.dataSource objectAtIndex:indexPath.row] objectForKey:@"user"] objectForKey:@"screen_name"];
     NSString * tweetText = [[self.dataSource objectAtIndex:indexPath.row] objectForKey:@"text"];
 
     UIFont * font = [UIFont fontWithName:@"Helvetica Neue" size:14];
@@ -187,9 +191,10 @@ static NSString * kFileName = @"tweets";
 
 - (void)loadNewTweets
 {
-    NSString * sinceID = (NSString *)[[[self sortIDs] sortedArrayUsingSelector:@selector(compare:)] lastObject];
+    NSArray * ids = [self sortIDs];
+    NSNumber * sinceID = [[ids sortedArrayUsingSelector:@selector(compare:)] lastObject];
     
-    [[APIConnectionManager sharedManager] loadNewTweetsForQuery:kSearchQuery withSinceID:sinceID completionHandler:^(NSData *responseData, NSHTTPURLResponse *urlResponse, NSError *error)
+    [[APIConnectionManager sharedManager] loadNewTweetsForQuery:kSearchQuery withSinceID:[sinceID stringValue] completionHandler:^(NSData *responseData, NSHTTPURLResponse *urlResponse, NSError *error)
     {
         if (responseData)
         {
@@ -227,9 +232,10 @@ static NSString * kFileName = @"tweets";
 
 - (void)loadOlderTweets
 {
-    NSString * maxID = (NSString *)[[[self sortIDs] sortedArrayUsingSelector:@selector(compare:)] firstObject];
+    NSArray * ids = [self sortIDs];
+    NSNumber * maxID = [[ids sortedArrayUsingSelector:@selector(compare:)] firstObject];
     
-    [[APIConnectionManager sharedManager] loadOlderTweetsForQuery:kSearchQuery withMaxID:maxID completionHandler:^(NSData *responseData, NSHTTPURLResponse *urlResponse, NSError *error)
+    [[APIConnectionManager sharedManager] loadOlderTweetsForQuery:kSearchQuery withMaxID:[maxID stringValue] completionHandler:^(NSData *responseData, NSHTTPURLResponse *urlResponse, NSError *error)
     {
         if (responseData)
         {
@@ -289,40 +295,57 @@ static NSString * kFileName = @"tweets";
         return NO;
 }
 
-#pragma mark – Data caching
-
-- (void)archiveTweets
+- (NSString *)filePathForArchive
 {
     NSString * documentsDirectoryPath = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
     NSString * filePath = [NSString stringWithFormat:@"%@/%@", documentsDirectoryPath, kFileName];
     
-    [NSKeyedArchiver archiveRootObject:self.dataSource toFile:filePath];
+    return filePath;
 }
 
-- (void)unarchiveTweets
+#pragma mark – Data caching
+
+- (void)saveTweets
 {
-    NSFileManager * fileManager = [NSFileManager defaultManager];
-    NSString * documentsDirectoryPath = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
-    NSString * filePath = [NSString stringWithFormat:@"%@/%@", documentsDirectoryPath, kFileName];
+    for (NSDictionary * dict in self.dataSource)
+    {
+        Tweet * tweet = [NSEntityDescription insertNewObjectForEntityForName:@"Tweet" inManagedObjectContext:[CoreDataManager sharedManager].managedObjectContext];
+        tweet.author = [[dict objectForKey:@"user"] objectForKey:@"screen_name"];
+        tweet.text = [dict objectForKey:@"text"];
+        tweet.twitID = [NSNumber numberWithInteger:[[dict objectForKey:@"id"] integerValue]];
+    }
     
-    if( [fileManager fileExistsAtPath:filePath] )
+    [[CoreDataManager sharedManager] saveContext];
+}
+
+- (void)loadTweetsFromDatabase
+{
+    NSMutableArray * loadedTweets = [NSMutableArray new];
+    NSArray * loadedObjects = [[CoreDataManager sharedManager] fetchObjectsForEntityName:@"Tweet"];
+    
+    for (Tweet * tweet in loadedObjects)
     {
-        self.dataSource = [NSKeyedUnarchiver unarchiveObjectWithFile:filePath];
+        NSMutableDictionary * dict = [NSMutableDictionary new];
+        NSMutableDictionary * userDict = [NSMutableDictionary new];
+        
+        [dict setValue:tweet.twitID forKey:@"id"];
+        [userDict setValue:tweet.author forKey:@"screen_name"];
+        [dict setValue:userDict forKey:@"user"];
+        [dict setValue:tweet.text forKey:@"text"];
+        [loadedTweets addObject:dict];
     }
-    else
-    {
-        NSLog(@"Unarchiving error");
-    }
+    
+    self.dataSource = loadedTweets;
 }
 
 - (void)applicationWillResignActive:(NSNotification *)notification
 {
-    [self archiveTweets];
+    [self saveTweets];
 }
 
 - (void)applicationWillTerminate:(NSNotification *)notification
 {
-    [self archiveTweets];
+    [self saveTweets];
     [[NSNotificationCenter defaultCenter] removeObserver:self name:UIApplicationWillResignActiveNotification object:nil];
     [[NSNotificationCenter defaultCenter] removeObserver:self name:UIApplicationWillTerminateNotification object:nil];
     
