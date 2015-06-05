@@ -57,22 +57,12 @@
              }
              else
              {
-                 UIAlertView * alert = [[UIAlertView alloc] initWithTitle:@"Twitter Authorization"
-                                                                  message:@"Please log into Twitter in the Settings and then try again!"
-                                                                 delegate:self
-                                                        cancelButtonTitle:@"Ok"
-                                                        otherButtonTitles: nil];
-                 [alert show];
-             }
+                [self showAlertWithTitle:@"Twitter Authorization" andMessage:@"Please open Setting, log into Twitter and then try again!"];
+            }
          }
          else
          {
-             UIAlertView * alert = [[UIAlertView alloc] initWithTitle:@"Access restricted"
-                                                              message:@"Please provide access to the Twitter account"
-                                                             delegate:self
-                                                    cancelButtonTitle:@"Ok"
-                                                    otherButtonTitles: nil];
-             [alert show];
+            [self showAlertWithTitle:@"Access restricted" andMessage:@"Please provide access to the Twitter account"];
          }
      }];
 }
@@ -114,6 +104,24 @@
      {
          completionHandler(responseData, urlResponse, error);
      }];
+}
+
+#pragma mark – Alert
+
+- (void)showAlertWithTitle:(NSString *)title andMessage:(NSString *)message
+{
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIAlertController * alertController = [UIAlertController alertControllerWithTitle:title
+                                                                                  message:message
+                                                                           preferredStyle:UIAlertControllerStyleAlert];
+        
+        UIAlertAction * okAction = [UIAlertAction actionWithTitle:@"Ok"
+                                                            style:UIAlertActionStyleDefault
+                                                          handler:^(UIAlertAction *action) { /* place for action */ }];
+        [alertController addAction:okAction];
+        
+        [[[UIApplication sharedApplication] keyWindow].rootViewController presentViewController:alertController animated:YES completion:nil];
+    });
 }
 
 @end
